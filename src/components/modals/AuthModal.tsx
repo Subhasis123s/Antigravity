@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { X, Sparkles, ArrowRight, Github, Mail, ShieldCheck } from "lucide-react";
+import { X, Sparkles, ArrowRight, Github, Mail, Lock, User as UserIcon, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Button } from "../ui/Button";
+import { useAuth, AuthErrorDetails } from "@/context/AuthContext";
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -16,14 +17,105 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   initialTab = "signup",
 }) => {
-  const [tab, setTab] = useState<"signin" | "signup">(initialTab);
-  const [email, setEmail] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const {
+    signUp,
+    signInWithEmail,
+    sendMagicLink,
+    signInWithGoogle,
+    signInWithGithub,
+    loading,
+  } = useAuth();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const [tab, setTab] = useState<"signin" | "signup">(initialTab);
+  const [authMode, setAuthMode] = useState<"password" | "magic">("password");
+
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [errorDetails, setErrorDetails] = useState<AuthErrorDetails | null>(null);
+  const [confirmationSent, setConfirmationSent] = useState(false);
+  const [magicLinkSent, setMagicLinkSent] = useState(false);
+
+  useEffect(() => {
+    setTab(initialTab);
+    setErrorDetails(null);
+    setConfirmationSent(false);
+    setMagicLinkSent(false);
+  }, [initialTab, isOpen]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (email) {
-      setSubmitted(true);
+    setErrorDetails(null);
+    setConfirmationSent(false);
+    setMagicLinkSent(false);
+
+    if (!email) {
+      setErrorDetails({ message: "Please enter your email address." });
+      return;
+    }
+
+    if (tab === "signup") {
+      if (!fullName || !password) {
+        setErrorDetails({ message: "Please provide your full name, email, and password." });
+        return;
+      }
+
+      const res = await signUp(fullName, email, password);
+      if (!res.success) {
+        setErrorDetails(
+          res.errorDetails || { message: res.error || "Failed to create account." }
+        );
+      } else if (res.requiresConfirmation) {
+        setConfirmationSent(true);
+      } else {
+        onClose();
+      }
+    } else {
+      if (authMode === "magic") {
+        const res = await sendMagicLink(email);
+        if (!res.success) {
+          setErrorDetails(
+            res.errorDetails || { message: res.error || "Failed to dispatch magic link." }
+          );
+        } else {
+          setMagicLinkSent(true);
+        }
+      } else {
+        if (!password) {
+          setErrorDetails({ message: "Please enter your password." });
+          return;
+        }
+
+        const res = await signInWithEmail(email, password);
+        if (!res.success) {
+          setErrorDetails(
+            res.errorDetails || { message: res.error || "Invalid email or password." }
+          );
+        } else {
+          onClose();
+        }
+      }
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    setErrorDetails(null);
+    const res = await signInWithGoogle();
+    if (!res.success) {
+      setErrorDetails(
+        res.errorDetails || { message: res.error || "Failed to authenticate with Google." }
+      );
+    }
+  };
+
+  const handleGithubSignIn = async () => {
+    setErrorDetails(null);
+    const res = await signInWithGithub();
+    if (!res.success) {
+      setErrorDetails(
+        res.errorDetails || { message: res.error || "Failed to authenticate with GitHub." }
+      );
     }
   };
 
@@ -71,9 +163,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {/* Tab Switcher */}
             <div className="grid grid-cols-2 p-1 bg-surface-subtle border border-border rounded-xl mb-6">
               <button
+                type="button"
                 onClick={() => {
                   setTab("signup");
-                  setSubmitted(false);
+                  setErrorDetails(null);
+                  setConfirmationSent(false);
+                  setMagicLinkSent(false);
                 }}
                 className={`py-2 text-sm font-medium rounded-lg transition-all ${
                   tab === "signup"
@@ -84,9 +179,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 Create Account
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setTab("signin");
-                  setSubmitted(false);
+                  setErrorDetails(null);
+                  setConfirmationSent(false);
+                  setMagicLinkSent(false);
                 }}
                 className={`py-2 text-sm font-medium rounded-lg transition-all ${
                   tab === "signin"
@@ -98,44 +196,71 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </button>
             </div>
 
-            {submitted ? (
+            {confirmationSent ? (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="py-8 text-center space-y-4"
+                className="py-6 text-center space-y-4"
               >
-                <div className="h-16 w-16 bg-success/10 text-success rounded-full flex items-center justify-center mx-auto border border-success/30">
-                  <ShieldCheck className="h-8 w-8" />
+                <div className="h-14 w-14 bg-success/10 text-success rounded-full flex items-center justify-center mx-auto border border-success/30">
+                  <CheckCircle2 className="h-7 w-7" />
                 </div>
-                <h3 className="text-xl font-bold text-white">Check Your Inbox</h3>
-                <p className="text-sm text-text-secondary">
-                  We sent a magic login link to <strong className="text-white">{email}</strong>.
-                  Click it to access your Antigravity workspace.
+                <h3 className="text-lg font-bold text-white">Verify Your Email</h3>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  We dispatched an activation link to <strong className="text-white">{email}</strong>.
+                  Please check your inbox to confirm your account and enter your workspace.
                 </p>
-                <Button variant="outline" className="w-full mt-4" onClick={() => setSubmitted(false)}>
-                  Use a different email
+                <Button variant="outline" className="w-full mt-2" onClick={() => setConfirmationSent(false)}>
+                  Back to Registration
+                </Button>
+              </motion.div>
+            ) : magicLinkSent ? (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="py-6 text-center space-y-4"
+              >
+                <div className="h-14 w-14 bg-success/10 text-success rounded-full flex items-center justify-center mx-auto border border-success/30">
+                  <CheckCircle2 className="h-7 w-7" />
+                </div>
+                <h3 className="text-lg font-bold text-white">Check Your Inbox</h3>
+                <p className="text-xs text-text-secondary leading-relaxed">
+                  Supabase sent a single-use login link to <strong className="text-white">{email}</strong>.
+                </p>
+                <Button variant="outline" className="w-full mt-2" onClick={() => setMagicLinkSent(false)}>
+                  Back to Sign In
                 </Button>
               </motion.div>
             ) : (
               <>
-                <h2 className="text-xl font-bold text-white mb-2">
+                <h2 className="text-xl font-bold text-white mb-1">
                   {tab === "signup"
                     ? "Experience the future of AI workspace"
                     : "Welcome back to your workspace"}
                 </h2>
-                <p className="text-xs text-text-secondary mb-6">
+                <p className="text-xs text-text-secondary mb-5">
                   {tab === "signup"
-                    ? "Get 14 days free trial. No credit card required."
-                    : "Enter your credentials to continue to your dashboard."}
+                    ? "Create your production account connected to Supabase."
+                    : "Enter your credentials to access your dashboard."}
                 </p>
 
-                {/* Social Login Buttons */}
-                <div className="space-y-3 mb-6">
-                  <button className="w-full py-2.5 px-4 rounded-xl bg-surface-subtle border border-border hover:border-border-bright text-white text-sm font-medium flex items-center justify-center gap-3 transition-colors">
+                {/* Social OAuth Buttons */}
+                <div className="space-y-2.5 mb-5">
+                  <button
+                    type="button"
+                    onClick={handleGithubSignIn}
+                    disabled={loading}
+                    className="w-full py-2.5 px-4 rounded-xl bg-surface-subtle border border-border hover:border-border-bright text-white text-sm font-medium flex items-center justify-center gap-3 transition-colors disabled:opacity-50"
+                  >
                     <Github className="h-4 w-4" />
                     Continue with GitHub
                   </button>
-                  <button className="w-full py-2.5 px-4 rounded-xl bg-surface-subtle border border-border hover:border-border-bright text-white text-sm font-medium flex items-center justify-center gap-3 transition-colors">
+                  <button
+                    type="button"
+                    onClick={handleGoogleSignIn}
+                    disabled={loading}
+                    className="w-full py-2.5 px-4 rounded-xl bg-surface-subtle border border-border hover:border-border-bright text-white text-sm font-medium flex items-center justify-center gap-3 transition-colors disabled:opacity-50"
+                  >
                     <svg className="h-4 w-4" viewBox="0 0 24 24">
                       <path
                         fill="#4285F4"
@@ -158,17 +283,48 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   </button>
                 </div>
 
-                <div className="relative my-6 flex items-center justify-center">
+                <div className="relative my-5 flex items-center justify-center">
                   <div className="absolute inset-0 flex items-center">
                     <div className="w-full border-t border-border" />
                   </div>
-                  <span className="relative bg-surface px-3 text-xs text-text-secondary uppercase tracking-wider font-mono">
-                    Or email
+                  <span className="relative bg-surface px-3 text-[10px] text-text-secondary uppercase tracking-wider font-mono">
+                    Or continue with email
                   </span>
                 </div>
 
-                {/* Email Form */}
-                <form onSubmit={handleSubmit} className="space-y-4">
+                {tab === "signin" && (
+                  <div className="flex justify-end mb-3">
+                    <button
+                      type="button"
+                      onClick={() => setAuthMode(authMode === "password" ? "magic" : "password")}
+                      className="text-xs text-primary-light hover:text-white underline"
+                    >
+                      {authMode === "password" ? "Switch to Magic Link Login" : "Switch to Password Login"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Form Fields */}
+                <form onSubmit={handleSubmit} className="space-y-3.5">
+                  {tab === "signup" && (
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1">
+                        Full Name
+                      </label>
+                      <div className="relative">
+                        <UserIcon className="absolute left-3.5 top-3 h-4 w-4 text-text-secondary" />
+                        <input
+                          type="text"
+                          required
+                          value={fullName}
+                          onChange={(e) => setFullName(e.target.value)}
+                          placeholder="Alex Mercer"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs font-medium text-text-secondary mb-1">
                       Work Email
@@ -181,22 +337,59 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
                         placeholder="alex@company.com"
-                        className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm"
+                        className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-white"
                       />
                     </div>
                   </div>
 
+                  {(tab === "signup" || authMode === "password") && (
+                    <div>
+                      <label className="block text-xs font-medium text-text-secondary mb-1">
+                        Password
+                      </label>
+                      <div className="relative">
+                        <Lock className="absolute left-3.5 top-3 h-4 w-4 text-text-secondary" />
+                        <input
+                          type="password"
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••••••"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl glass-input text-sm text-white"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {errorDetails && (
+                    <div className="p-3.5 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs space-y-1 font-mono leading-relaxed">
+                      <div className="flex items-center gap-1.5 font-bold text-red-300">
+                        <AlertTriangle className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+                        <span>Supabase Error</span>
+                      </div>
+                      <p><strong className="text-white">Message:</strong> {errorDetails.message || "Unknown error"}</p>
+                      {errorDetails.code && <p><strong className="text-white">Code / Status:</strong> {String(errorDetails.code)}</p>}
+                    </div>
+                  )}
+
                   <Button
                     type="submit"
                     variant="glow"
-                    className="w-full"
+                    disabled={loading}
+                    className="w-full mt-2"
                     icon={<ArrowRight className="h-4 w-4" />}
                   >
-                    {tab === "signup" ? "Get Started Free" : "Sign In with Magic Link"}
+                    {loading
+                      ? "Connecting to Supabase..."
+                      : tab === "signup"
+                      ? "Create Free Account"
+                      : authMode === "password"
+                      ? "Sign In to Workspace"
+                      : "Send Magic Login Link"}
                   </Button>
                 </form>
 
-                <p className="mt-4 text-center text-xs text-text-secondary">
+                <p className="mt-4 text-center text-[11px] text-text-secondary">
                   By continuing, you agree to our{" "}
                   <a href="#terms" className="underline hover:text-white">
                     Terms of Service

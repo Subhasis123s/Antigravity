@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import { User as SupabaseUser } from "@supabase/supabase-js";
 
 export interface User {
   id: string;
@@ -12,43 +14,42 @@ export interface User {
   createdAt: string;
 }
 
+export interface AuthErrorDetails {
+  message: string;
+  code?: string | number;
+  status?: number;
+  fullResponse?: any;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  error?: string;
+  errorDetails?: AuthErrorDetails;
+  requiresConfirmation?: boolean;
+}
+
 interface AuthContextType {
   user: User | null;
   loading: boolean;
   isAuthenticated: boolean;
-  signInWithGoogle: () => Promise<void>;
-  signInWithGithub: () => Promise<void>;
-  signInWithEmail: (email: string, password?: string, rememberMe?: boolean) => Promise<boolean>;
-  sendMagicLink: (email: string) => Promise<boolean>;
-  signUp: (name: string, email: string, password?: string) => Promise<boolean>;
-  sendForgotPassword: (email: string) => Promise<boolean>;
+  signInWithGoogle: () => Promise<AuthResponse>;
+  signInWithGithub: () => Promise<AuthResponse>;
+  signInWithEmail: (email: string, password?: string, rememberMe?: boolean) => Promise<AuthResponse>;
+  sendMagicLink: (email: string) => Promise<AuthResponse>;
+  signUp: (name: string, email: string, password?: string) => Promise<AuthResponse>;
+  sendForgotPassword: (email: string) => Promise<AuthResponse>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const AUTH_COOKIE_NAME = "antigravity_session";
-const AUTH_STORAGE_KEY = "antigravity_user_session";
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
-
-  // Load session from localStorage on mount
-  useEffect(() => {
-    try {
-      const savedUser = localStorage.getItem(AUTH_STORAGE_KEY);
-      if (savedUser) {
-        setUser(JSON.parse(savedUser));
-        setCookie(AUTH_COOKIE_NAME, "true", 7);
-      }
-    } catch (e) {
-      console.error("Failed to load user session", e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const supabase = createClient();
 
   const setCookie = (name: string, value: string, days: number) => {
     if (typeof document === "undefined") return;
@@ -61,97 +62,362 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; SameSite=Lax`;
   };
 
-  const persistSession = (userData: User, remember: boolean = true) => {
-    setUser(userData);
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(userData));
-    setCookie(AUTH_COOKIE_NAME, "true", remember ? 30 : 1);
-  };
-
-  const signInWithGoogle = async () => {
-    setLoading(true);
-    // Simulated Google OAuth login
-    await new Promise((res) => setTimeout(res, 800));
-    const mockUser: User = {
-      id: "usr_google_" + Math.random().toString(36).substring(2, 9),
-      name: "Alex Dev",
-      email: "alex.dev@gmail.com",
-      avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80",
-      provider: "google",
-      createdAt: new Date().toISOString(),
+  const formatSupabaseUser = (sbUser: SupabaseUser): User => {
+    const meta = sbUser.user_metadata || {};
+    const nameFromEmail = sbUser.email ? sbUser.email.split("@")[0] : "User";
+    return {
+      id: sbUser.id,
+      name: meta.full_name || meta.name || nameFromEmail,
+      email: sbUser.email || "",
+      avatar:
+        meta.avatar_url ||
+        `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(sbUser.email || "dev")}`,
+      provider: (sbUser.app_metadata?.provider as any) || "email",
+      createdAt: sbUser.created_at,
     };
-    persistSession(mockUser);
-    setLoading(false);
-    router.push("/dashboard");
   };
 
-  const signInWithGithub = async () => {
+  useEffect(() => {
+    async function initAuth() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user) {
+          const formatted = formatSupabaseUser(session.user);
+          setUser(formatted);
+          setCookie(AUTH_COOKIE_NAME, "true", 7);
+        } else {
+          setUser(null);
+          deleteCookie(AUTH_COOKIE_NAME);
+        }
+      } catch (e) {
+        console.error("[Supabase Auth] Init Exception:", e);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    initAuth();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const formatted = formatSupabaseUser(session.user);
+        setUser(formatted);
+        setCookie(AUTH_COOKIE_NAME, "true", 7);
+      } else {
+        setUser(null);
+        deleteCookie(AUTH_COOKIE_NAME);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const signInWithGoogle = async (): Promise<AuthResponse> => {
     setLoading(true);
-    // Simulated GitHub OAuth login
-    await new Promise((res) => setTimeout(res, 800));
-    const mockUser: User = {
-      id: "usr_github_" + Math.random().toString(36).substring(2, 9),
-      name: "Alex Developer",
-      email: "alex@github.com",
-      avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80",
-      provider: "github",
-      createdAt: new Date().toISOString(),
-    };
-    persistSession(mockUser);
-    setLoading(false);
-    router.push("/dashboard");
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/api/auth/callback`,
+        },
+      });
+
+      if (error) {
+        console.error("[Supabase Auth] Google OAuth Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "GOOGLE_OAUTH_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("[Supabase Auth] Google OAuth Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "Failed to initiate Google OAuth",
+        errorDetails: {
+          message: err?.message || "Failed to initiate Google OAuth",
+          fullResponse: err,
+        },
+      };
+    }
   };
 
-  const signInWithEmail = async (email: string, password?: string, rememberMe = true): Promise<boolean> => {
+  const signInWithGithub = async (): Promise<AuthResponse> => {
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 600));
-    const nameFromEmail = email.split("@")[0].replace(".", " ");
-    const formattedName = nameFromEmail.charAt(0).toUpperCase() + nameFromEmail.slice(1);
-    const mockUser: User = {
-      id: "usr_email_" + Math.random().toString(36).substring(2, 9),
-      name: formattedName || "Workspace Member",
-      email,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-      provider: "email",
-      createdAt: new Date().toISOString(),
-    };
-    persistSession(mockUser, rememberMe);
-    setLoading(false);
-    router.push("/dashboard");
-    return true;
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "github",
+        options: {
+          redirectTo: `${window.location.origin}/api/auth/callback`,
+        },
+      });
+
+      if (error) {
+        console.error("[Supabase Auth] GitHub OAuth Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "GITHUB_OAUTH_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      console.error("[Supabase Auth] GitHub OAuth Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "Failed to initiate GitHub OAuth",
+        errorDetails: {
+          message: err?.message || "Failed to initiate GitHub OAuth",
+          fullResponse: err,
+        },
+      };
+    }
   };
 
-  const sendMagicLink = async (email: string): Promise<boolean> => {
-    await new Promise((res) => setTimeout(res, 700));
-    return true;
-  };
-
-  const signUp = async (name: string, email: string, password?: string): Promise<boolean> => {
+  const signInWithEmail = async (
+    email: string,
+    password?: string,
+    rememberMe = true
+  ): Promise<AuthResponse> => {
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 800));
-    const mockUser: User = {
-      id: "usr_new_" + Math.random().toString(36).substring(2, 9),
-      name,
-      email,
-      avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(email)}`,
-      provider: "email",
-      createdAt: new Date().toISOString(),
-    };
-    persistSession(mockUser, true);
-    setLoading(false);
-    router.push("/dashboard");
-    return true;
+
+    if (!password) {
+      setLoading(false);
+      return {
+        success: false,
+        error: "Password is required for email login.",
+        errorDetails: { message: "Password is required for email login." },
+      };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
+
+      if (error) {
+        console.error("[Supabase Auth] SignIn Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "SIGNIN_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      if (data.user && data.session) {
+        const formatted = formatSupabaseUser(data.user);
+        setUser(formatted);
+        setCookie(AUTH_COOKIE_NAME, "true", rememberMe ? 30 : 1);
+        setLoading(false);
+        router.push("/dashboard");
+        return { success: true };
+      }
+
+      setLoading(false);
+      return {
+        success: false,
+        error: "Unable to establish user session.",
+        errorDetails: { message: "Unable to establish user session." },
+      };
+    } catch (err: any) {
+      console.error("[Supabase Auth] SignIn Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "An unexpected error occurred during login.",
+        errorDetails: { message: err?.message || "An unexpected error occurred during login.", fullResponse: err },
+      };
+    }
   };
 
-  const sendForgotPassword = async (email: string): Promise<boolean> => {
-    await new Promise((res) => setTimeout(res, 600));
-    return true;
+  const sendMagicLink = async (email: string): Promise<AuthResponse> => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: {
+          emailRedirectTo: `${window.location.origin}/api/auth/callback`,
+        },
+      });
+
+      if (error) {
+        console.error("[Supabase Auth] Magic Link Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "MAGIC_LINK_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      setLoading(false);
+      return { success: true };
+    } catch (err: any) {
+      console.error("[Supabase Auth] Magic Link Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "Failed to send Magic Link.",
+        errorDetails: { message: err?.message || "Failed to send Magic Link.", fullResponse: err },
+      };
+    }
+  };
+
+  const signUp = async (
+    name: string,
+    email: string,
+    password?: string
+  ): Promise<AuthResponse> => {
+    setLoading(true);
+
+    if (!password) {
+      setLoading(false);
+      return {
+        success: false,
+        error: "Password is required for registration.",
+        errorDetails: { message: "Password is required for registration." },
+      };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: name.trim(),
+          },
+        },
+      });
+
+      if (error) {
+        // Log the complete raw error object to browser console
+        console.error("[Supabase Auth] SignUp Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "SIGNUP_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      if (data.user) {
+        if (!data.session) {
+          setLoading(false);
+          return {
+            success: true,
+            requiresConfirmation: true,
+          };
+        }
+
+        const formatted = formatSupabaseUser(data.user);
+        setUser(formatted);
+        setCookie(AUTH_COOKIE_NAME, "true", 7);
+        setLoading(false);
+        router.push("/dashboard");
+        return { success: true };
+      }
+
+      setLoading(false);
+      return {
+        success: false,
+        error: "Failed to create user account.",
+        errorDetails: { message: "Failed to create user account." },
+      };
+    } catch (err: any) {
+      console.error("[Supabase Auth] SignUp Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "An unexpected error occurred during signup.",
+        errorDetails: { message: err?.message || "An unexpected error occurred during signup.", fullResponse: err },
+      };
+    }
+  };
+
+  const sendForgotPassword = async (email: string): Promise<AuthResponse> => {
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+        redirectTo: `${window.location.origin}/login`,
+      });
+
+      if (error) {
+        console.error("[Supabase Auth] Reset Password Error:", error);
+        setLoading(false);
+        return {
+          success: false,
+          error: error.message,
+          errorDetails: {
+            message: error.message,
+            code: (error as any).code || (error as any).status || "RESET_ERROR",
+            status: (error as any).status,
+            fullResponse: error,
+          },
+        };
+      }
+
+      setLoading(false);
+      return { success: true };
+    } catch (err: any) {
+      console.error("[Supabase Auth] Reset Password Exception:", err);
+      setLoading(false);
+      return {
+        success: false,
+        error: err?.message || "Failed to dispatch reset email.",
+        errorDetails: { message: err?.message || "Failed to dispatch reset email.", fullResponse: err },
+      };
+    }
   };
 
   const signOut = async () => {
     setLoading(true);
-    await new Promise((res) => setTimeout(res, 300));
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error("[Supabase Auth] SignOut Error:", err);
+    }
     setUser(null);
-    localStorage.removeItem(AUTH_STORAGE_KEY);
     deleteCookie(AUTH_COOKIE_NAME);
     setLoading(false);
     router.push("/login");

@@ -2,12 +2,12 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { Mail, Lock, ArrowRight, Sparkles, CheckCircle2 } from "lucide-react";
+import { Mail, Lock, ArrowRight, CheckCircle2, AlertTriangle } from "lucide-react";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { FloatingInput } from "@/components/auth/FloatingInput";
 import { SocialAuthButtons } from "@/components/auth/SocialAuthButtons";
 import { Button } from "@/components/ui/Button";
-import { useAuth } from "@/context/AuthContext";
+import { useAuth, AuthErrorDetails } from "@/context/AuthContext";
 
 export default function LoginPage() {
   const { signInWithEmail, sendMagicLink, loading } = useAuth();
@@ -16,26 +16,37 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(true);
   const [magicSent, setMagicSent] = useState(false);
-  const [error, setError] = useState("");
+  const [errorDetails, setErrorDetails] = useState<AuthErrorDetails | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
+    setErrorDetails(null);
 
     if (!email) {
-      setError("Please enter your work email.");
+      setErrorDetails({ message: "Please enter your work email." });
       return;
     }
 
     if (authMethod === "magic") {
-      const success = await sendMagicLink(email);
-      if (success) setMagicSent(true);
+      const res = await sendMagicLink(email);
+      if (res.success) {
+        setMagicSent(true);
+      } else {
+        setErrorDetails(
+          res.errorDetails || { message: res.error || "Failed to send magic link." }
+        );
+      }
     } else {
       if (!password) {
-        setError("Please enter your password.");
+        setErrorDetails({ message: "Please enter your password." });
         return;
       }
-      await signInWithEmail(email, password, rememberMe);
+      const res = await signInWithEmail(email, password, rememberMe);
+      if (!res.success) {
+        setErrorDetails(
+          res.errorDetails || { message: res.error || "Authentication failed. Please check your credentials." }
+        );
+      }
     }
   };
 
@@ -51,6 +62,7 @@ export default function LoginPage() {
           onClick={() => {
             setAuthMethod("password");
             setMagicSent(false);
+            setErrorDetails(null);
           }}
           className={`py-2 text-xs font-medium rounded-lg transition-all ${
             authMethod === "password"
@@ -65,6 +77,7 @@ export default function LoginPage() {
           onClick={() => {
             setAuthMethod("magic");
             setMagicSent(false);
+            setErrorDetails(null);
           }}
           className={`py-2 text-xs font-medium rounded-lg transition-all ${
             authMethod === "magic"
@@ -125,7 +138,16 @@ export default function LoginPage() {
             />
           )}
 
-          {error && <p className="text-xs text-red-400 font-medium">{error}</p>}
+          {errorDetails && (
+            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs space-y-1.5 font-mono leading-relaxed">
+              <div className="flex items-center gap-1.5 font-bold text-red-300">
+                <AlertTriangle className="h-4 w-4 text-red-400 flex-shrink-0" />
+                <span>Supabase Login Error</span>
+              </div>
+              <p><strong className="text-white">Message:</strong> {errorDetails.message || "Unknown error"}</p>
+              {errorDetails.code && <p><strong className="text-white">Code / Status:</strong> {String(errorDetails.code)}</p>}
+            </div>
+          )}
 
           {/* Remember Me & Forgot Password Row */}
           {authMethod === "password" && (
