@@ -1,12 +1,42 @@
 "use client";
 
-import React from "react";
-import { CreditCard, Zap, CheckCircle2, ArrowRight, Download, Sparkles } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { CreditCard, ArrowRight, Download, Cpu, Database, Zap } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { GlassCard } from "@/components/ui/GlassCard";
+import { ObservabilityMetrics, WorkspaceQuota } from "@/types/observability";
 
 export const BillingView: React.FC = () => {
+  const [metrics, setMetrics] = useState<ObservabilityMetrics | null>(null);
+  const [quota, setQuota] = useState<WorkspaceQuota | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchQuotaData = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/observability/metrics");
+      const json = await res.json();
+      if (json.success && json.data) {
+        setMetrics(json.data.metrics);
+        setQuota(json.data.quota);
+      }
+    } catch (err) {
+      console.error("Failed to load quota metrics", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchQuotaData();
+  }, []);
+
+  const tokenPercent = Math.min(
+    100,
+    Math.round(((quota?.tokensUsedThisMonth || 0) / (quota?.monthlyTokenLimit || 10000000)) * 100)
+  );
+
   const invoices = [
     { id: "INV-2026-004", date: "Jul 01, 2026", amount: "$62.00", status: "Paid" },
     { id: "INV-2026-003", date: "Jun 01, 2026", amount: "$62.00", status: "Paid" },
@@ -21,7 +51,7 @@ export const BillingView: React.FC = () => {
           Subscription & Billing
         </h1>
         <p className="text-xs text-text-secondary">
-          Manage your workspace plan, subagent quotas, payment methods, and invoice receipts.
+          Manage your workspace plan, token quotas, agent allocations, and invoice receipts.
         </p>
       </div>
 
@@ -31,7 +61,7 @@ export const BillingView: React.FC = () => {
           <div>
             <div className="flex items-center gap-2">
               <Badge variant="primary">CURRENT PLAN</Badge>
-              <h2 className="text-xl font-bold text-white">Pro Workspace</h2>
+              <h2 className="text-xl font-bold text-white">{quota?.plan || "Pro Workspace"}</h2>
             </div>
             <p className="text-xs text-text-secondary mt-1">
               Billed annually at <strong className="text-white">$62 / month</strong> &bull; Renews Aug 01, 2026
@@ -43,20 +73,54 @@ export const BillingView: React.FC = () => {
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-border text-xs font-mono">
-          <div className="p-3.5 rounded-xl bg-surface-subtle border border-border space-y-1">
-            <span className="text-text-muted">Subagent Swarms</span>
-            <div className="text-white font-bold text-sm">Unlimited Swarm Access</div>
+        {loading ? (
+          <div className="p-4 text-center text-xs text-text-secondary font-mono animate-pulse">
+            Fetching usage metrics...
           </div>
-          <div className="p-3.5 rounded-xl bg-surface-subtle border border-border space-y-1">
-            <span className="text-text-muted">Token Context Capacity</span>
-            <div className="text-primary-light font-bold text-sm">2,000,000 Tokens</div>
+        ) : (
+          <div className="space-y-4 pt-4 border-t border-border">
+            {/* Token Progress Bar */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between text-xs font-mono">
+                <span className="text-text-secondary flex items-center gap-1.5">
+                  <Cpu className="h-3.5 w-3.5 text-primary-light" /> Monthly Token Usage
+                </span>
+                <span className="text-white font-bold">
+                  {(quota?.tokensUsedThisMonth || 0).toLocaleString()} / {(quota?.monthlyTokenLimit || 10000000).toLocaleString()} ({tokenPercent}%)
+                </span>
+              </div>
+              <div className="h-2 w-full bg-black/50 rounded-full overflow-hidden border border-border">
+                <div
+                  className="h-full bg-gradient-to-r from-primary to-emerald-400 rounded-full transition-all duration-500"
+                  style={{ width: `${Math.max(5, tokenPercent)}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs font-mono pt-2">
+              <div className="p-3.5 rounded-xl bg-surface-subtle border border-border space-y-1">
+                <span className="text-text-muted flex items-center gap-1">
+                  <Zap className="h-3.5 w-3.5 text-emerald-400" /> Active Subagent Limit
+                </span>
+                <div className="text-white font-bold text-sm">
+                  {quota?.activeAgentsCount || 0} / {quota?.maxAgentsAllowed || 50} Swarms Active
+                </div>
+              </div>
+              <div className="p-3.5 rounded-xl bg-surface-subtle border border-border space-y-1">
+                <span className="text-text-muted flex items-center gap-1">
+                  <Database className="h-3.5 w-3.5 text-cyan-400" /> Vector Vault Storage
+                </span>
+                <div className="text-primary-light font-bold text-sm">
+                  {((quota?.storageBytesUsed || 0) / (1024 * 1024)).toFixed(1)} MB / 10 GB
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
+        )}
       </GlassCard>
 
       {/* Invoice History */}
-      <div className="p-6 rounded-2xl bg-surface/70 border border-border space-y-4">
+      <div className="p-6 rounded-2xl bg-surface/70 border border-border space-y-4 shadow-glow">
         <h3 className="text-sm font-bold text-white">Billing History & Invoices</h3>
 
         <div className="space-y-2">
