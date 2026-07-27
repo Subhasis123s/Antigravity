@@ -21,6 +21,9 @@ export function errorResponse(message: string, statusCode = 500) {
   );
 }
 
+export const apiSuccessResponse = successResponse;
+export const apiErrorResponse = errorResponse;
+
 export function unauthorizedResponse(message = "Unauthorized access") {
   return errorResponse(message, 401);
 }

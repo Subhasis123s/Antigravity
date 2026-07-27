@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { AgentService } from "@/lib/services/agent.service";
-import { validateCreateAgent } from "@/lib/validation/agent";
+import { ChatService } from "@/lib/services/chat.service";
+import { validateCreateChatMessage } from "@/lib/validation/chat";
 import { apiErrorResponse, apiSuccessResponse } from "@/lib/api-response";
 import { logger } from "@/lib/logger";
 
 /**
-  GET /api/agents?workspace_id=uuid
-  Lists all subagents in a workspace.
+  GET /api/chat?workspace_id=uuid&session_id=uuid
+  Lists chat sessions or session messages.
  */
 export async function GET(request: Request) {
   try {
@@ -22,9 +22,14 @@ export async function GET(request: Request) {
     }
 
     const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get("session_id");
     const workspaceId = searchParams.get("workspace_id");
 
-    // Fetch user's default workspace if workspace_id not passed
+    if (sessionId) {
+      const messages = await ChatService.getMessages(user.id, sessionId);
+      return apiSuccessResponse(messages, 200);
+    }
+
     let wsId = workspaceId;
     if (!wsId) {
       const { data: ws } = await (supabase as any)
@@ -39,18 +44,17 @@ export async function GET(request: Request) {
       return apiSuccessResponse([], 200);
     }
 
-    const agents = await AgentService.getAgents(user.id, wsId);
-
-    return apiSuccessResponse(agents, 200);
+    const sessions = await ChatService.getSessions(user.id, wsId);
+    return apiSuccessResponse(sessions, 200);
   } catch (err: any) {
-    logger.error("GET /api/agents error", err);
-    return apiErrorResponse(err?.message || "Internal server error while fetching agents.", 500);
+    logger.error("GET /api/chat error", err);
+    return apiErrorResponse(err?.message || "Internal server error while fetching chat data.", 500);
   }
 }
 
 /**
-  POST /api/agents
-  Creates and deploys a new autonomous subagent.
+  POST /api/chat
+  Sends a prompt message and generates an AI subagent response.
  */
 export async function POST(request: Request) {
   try {
@@ -65,17 +69,17 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json();
-    const validation = validateCreateAgent(body);
+    const validation = validateCreateChatMessage(body);
 
     if (!validation.valid || !validation.data) {
-      return apiErrorResponse(validation.error || "Invalid agent input.", 400);
+      return apiErrorResponse(validation.error || "Invalid chat message payload.", 400);
     }
 
-    const newAgent = await AgentService.createAgent(user.id, validation.data);
+    const result = await ChatService.sendMessage(user.id, validation.data);
 
-    return apiSuccessResponse(newAgent, 201);
+    return apiSuccessResponse(result, 201);
   } catch (err: any) {
-    logger.error("POST /api/agents error", err);
-    return apiErrorResponse(err?.message || "Internal server error while creating agent.", 500);
+    logger.error("POST /api/chat error", err);
+    return apiErrorResponse(err?.message || "Internal server error while sending message.", 500);
   }
 }

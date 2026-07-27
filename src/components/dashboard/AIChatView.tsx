@@ -1,54 +1,119 @@
 "use client";
 
-import React, { useState } from "react";
-import { Bot, Send, Sparkles, Terminal, Copy, Check, RefreshCw, Trash2, Cpu } from "lucide-react";
+import React, { useState, useEffect } from "react";
+import { Bot, Send, Sparkles, Copy, Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { ChatMessage } from "@/types/chat";
+import { useAuth } from "@/context/AuthContext";
 
 export const AIChatView: React.FC = () => {
-  const [messages, setMessages] = useState([
-    {
-      id: 1,
-      sender: "user",
-      text: "Refactor the TailwindCSS glassmorphism component to support animated border gradients and subagent state triggers.",
-      time: "14:30",
-    },
-    {
-      id: 2,
-      sender: "agent",
-      agentName: "Frontend Swarm Architect",
-      text: "I have updated the `GlassCard.tsx` component with an animated top border gradient highlight and smooth state transitions:",
-      code: `export const GlassCard: React.FC<GlassCardProps> = ({ children }) => {\n  return (\n    <div className="relative rounded-2xl bg-surface/80 backdrop-blur-xl border border-border hover:border-primary/40 shadow-glow">\n      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/20 to-transparent" />\n      {children}\n    </div>\n  );\n};`,
-      time: "14:31",
-    },
-  ]);
+  const { user } = useAuth();
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [model, setModel] = useState("gemini-3.6-pro");
   const [isTyping, setIsTyping] = useState(false);
-  const [copiedId, setCopiedId] = useState<number | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  const handleSend = (e: React.FormEvent) => {
+  const fetchChatData = async () => {
+    try {
+      const res = await fetch("/api/chat");
+      const json = await res.json();
+      if (json.success && Array.isArray(json.data) && json.data.length > 0) {
+        const activeSession = json.data[0];
+        setSessionId(activeSession.id);
+        if (activeSession.messages) {
+          setMessages(activeSession.messages);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load chat history", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchChatData();
+  }, []);
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
-    const userMsg = { id: Date.now(), sender: "user", text: input, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
-    setMessages((prev) => [...prev, userMsg]);
-    const promptText = input;
+    const userPrompt = input.trim();
     setInput("");
     setIsTyping(true);
 
-    setTimeout(() => {
-      const agentMsg = {
-        id: Date.now() + 1,
-        sender: "agent",
-        agentName: "Code Subagent Swarm",
-        text: `Executed your request using ${model}. Built test suite and compiled successfully in 0.82ms.`,
-        code: `// Output generated for prompt: "${promptText.slice(0, 30)}..."\nconst result = await Antigravity.runSwarm({ task: "${promptText}" });\nconsole.log("Status: 200 OK");`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    try {
+      const wsRes = await fetch("/api/workspace");
+      const wsJson = await wsRes.json();
+      const workspaceId =
+        wsJson.data?.id ||
+        wsJson.workspace?.id ||
+        (Array.isArray(wsJson.workspaces) && wsJson.workspaces[0]?.id) ||
+        null;
+
+      if (!workspaceId) {
+        setIsTyping(false);
+        return;
+      }
+
+      // Optimistic user message update
+      const tempUserMsg: ChatMessage = {
+        id: "temp_" + Date.now(),
+        session_id: sessionId || "temp_session",
+        role: "user",
+        content: userPrompt,
+        tokens: 0,
+        cost: 0,
+        latency_ms: 0,
+        created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, agentMsg]);
+      setMessages((prev) => [...prev, tempUserMsg]);
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId || undefined,
+          workspace_id: workspaceId,
+          message: userPrompt,
+          model,
+        }),
+      });
+
+      const json = await res.json();
+      if (json.success && json.data?.assistantMessage) {
+        if (!sessionId && json.data.userMessage?.session_id) {
+          setSessionId(json.data.userMessage.session_id);
+        }
+
+        setMessages((prev) => [
+          ...prev.filter((m) => m.id !== tempUserMsg.id),
+          json.data.userMessage,
+          json.data.assistantMessage,
+        ]);
+      }
+    } catch (err) {
+      console.error("Failed to send chat message", err);
+    } finally {
       setIsTyping(false);
-    }, 1200);
+    }
+  };
+
+  const handleClearChat = async () => {
+    if (!sessionId) {
+      setMessages([]);
+      return;
+    }
+
+    try {
+      await fetch(`/api/chat/${sessionId}`, { method: "DELETE" });
+      setMessages([]);
+      setSessionId(null);
+    } catch (err) {
+      console.error("Failed to clear chat session", err);
+    }
   };
 
   return (
@@ -65,7 +130,7 @@ export const AIChatView: React.FC = () => {
             <div className="text-sm font-bold text-white flex items-center gap-2">
               AI Swarm Chat <Badge variant="success">Active</Badge>
             </div>
-            <div className="text-[10px] text-text-secondary">Parallel execution runtime connected</div>
+            <div className="text-[10px] text-text-secondary">Connected to RAG Knowledge Vault & Vector Engine</div>
           </div>
         </div>
 
@@ -81,7 +146,7 @@ export const AIChatView: React.FC = () => {
           </select>
 
           <button
-            onClick={() => setMessages([])}
+            onClick={handleClearChat}
             className="p-2 rounded-xl bg-surface border border-border text-text-secondary hover:text-white"
             title="Clear Chat"
           >
@@ -92,46 +157,57 @@ export const AIChatView: React.FC = () => {
 
       {/* Messages Stream */}
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {messages.map((m) => (
-          <div key={m.id} className={`flex flex-col ${m.sender === "user" ? "items-end" : "items-start"}`}>
-            <div className={`max-w-2xl space-y-2 ${m.sender === "user" ? "text-right" : "text-left"}`}>
-              <div className="text-[10px] text-text-muted font-mono mb-1">
-                {m.sender === "user" ? "You" : m.agentName} &bull; {m.time}
-              </div>
+        {messages.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center space-y-3 text-text-secondary">
+            <Sparkles className="h-10 w-10 text-primary-light opacity-40 animate-pulse" />
+            <h3 className="text-base font-bold text-white">Start AI Swarm Conversation</h3>
+            <p className="text-xs max-w-sm">
+              Ask AI subagents to refactor code, run vector semantic search, or audit system security.
+            </p>
+          </div>
+        ) : (
+          messages.map((m) => (
+            <div key={m.id} className={`flex flex-col ${m.role === "user" ? "items-end" : "items-start"}`}>
+              <div className={`max-w-2xl space-y-2 ${m.role === "user" ? "text-right" : "text-left"}`}>
+                <div className="text-[10px] text-text-muted font-mono mb-1">
+                  {m.role === "user" ? "You" : "AI Swarm Architect"} &bull;{" "}
+                  {new Date(m.created_at || Date.now()).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </div>
 
-              <div
-                className={`p-4 rounded-2xl text-xs leading-relaxed ${
-                  m.sender === "user"
-                    ? "bg-primary text-white shadow-md inline-block text-left"
-                    : "bg-surface border border-border text-white space-y-3"
-                }`}
-              >
-                <p>{m.text}</p>
+                <div
+                  className={`p-4 rounded-2xl text-xs leading-relaxed ${
+                    m.role === "user"
+                      ? "bg-primary text-white shadow-md inline-block text-left"
+                      : "bg-surface border border-border text-white space-y-3"
+                  }`}
+                >
+                  <p className="whitespace-pre-wrap">{m.content}</p>
 
-                {m.code && (
-                  <div className="relative rounded-xl bg-black/60 border border-border p-3 font-mono text-[11px] text-primary-light overflow-x-auto">
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(m.code!);
-                        setCopiedId(m.id);
-                        setTimeout(() => setCopiedId(null), 2000);
-                      }}
-                      className="absolute top-2 right-2 p-1 rounded bg-surface border border-border text-text-secondary hover:text-white"
-                    >
-                      {copiedId === m.id ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
-                    </button>
-                    <pre>{m.code}</pre>
-                  </div>
-                )}
+                  {m.code_snippet && (
+                    <div className="relative rounded-xl bg-black/60 border border-border p-3 font-mono text-[11px] text-primary-light overflow-x-auto">
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(m.code_snippet!);
+                          setCopiedId(m.id);
+                          setTimeout(() => setCopiedId(null), 2000);
+                        }}
+                        className="absolute top-2 right-2 p-1 rounded bg-surface border border-border text-text-secondary hover:text-white"
+                      >
+                        {copiedId === m.id ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
+                      </button>
+                      <pre>{m.code_snippet}</pre>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
 
         {isTyping && (
           <div className="flex items-center gap-2 text-xs text-text-secondary font-mono animate-pulse">
             <Bot className="h-4 w-4 text-primary-light animate-spin" />
-            <span>Subagent Swarm is generating code response...</span>
+            <span>Subagent Swarm is querying knowledge base and generating response...</span>
           </div>
         )}
       </div>
@@ -142,7 +218,7 @@ export const AIChatView: React.FC = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask AI Swarm to write code, refactor components, or audit security..."
+          placeholder="Ask AI Swarm to write code, search knowledge base, or run security audit..."
           className="flex-1 px-4 py-3 rounded-xl glass-input text-xs"
         />
         <Button type="submit" variant="glow" icon={<Send className="h-4 w-4" />}>

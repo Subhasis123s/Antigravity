@@ -6,6 +6,7 @@
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- --------------------------------------------------------------------
 -- 1. UPDATED_AT TRIGGER FUNCTION
@@ -281,3 +282,306 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+-- ====================================================================
+-- BACKEND PHASE 3: PROJECT MANAGEMENT SCHEMA & RLS POLICIES
+-- ====================================================================
+
+CREATE TABLE IF NOT EXISTS public.projects (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    owner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    icon TEXT DEFAULT 'folder',
+    emoji TEXT DEFAULT '🚀',
+    cover_image TEXT,
+    color TEXT DEFAULT '#6E56CF',
+    visibility TEXT DEFAULT 'private' CHECK (visibility IN ('private', 'workspace', 'public')),
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'completed', 'archived')),
+    favorite BOOLEAN DEFAULT false,
+    pinned BOOLEAN DEFAULT false,
+    archived BOOLEAN DEFAULT false,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_workspace_project_slug UNIQUE (workspace_id, slug)
+);
+
+ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.project_members (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    role TEXT DEFAULT 'editor' CHECK (role IN ('owner', 'admin', 'editor', 'viewer')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_project_member UNIQUE (project_id, user_id)
+);
+
+ALTER TABLE public.project_members ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.project_activity (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.project_activity ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.project_settings (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    project_id UUID NOT NULL UNIQUE REFERENCES public.projects(id) ON DELETE CASCADE,
+    ai_preferences JSONB DEFAULT '{"model": "gemini-3.6-pro", "auto_agents": true, "temperature": 0.7}'::jsonb,
+    visibility TEXT DEFAULT 'private',
+    sharing JSONB DEFAULT '{"allow_public_link": false, "require_passcode": false}'::jsonb,
+    feature_flags JSONB DEFAULT '{"enable_swarm": true, "enable_vector_rag": true, "enable_cron": true}'::jsonb,
+    future_settings JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.project_settings ENABLE ROW LEVEL SECURITY;
+
+-- ====================================================================
+-- BACKEND PHASE 4: AI OPERATING SYSTEM SCHEMA & RLS POLICIES
+-- ====================================================================
+
+-- --------------------------------------------------------------------
+-- 8. AI AGENTS TABLE
+-- --------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.agents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES public.projects(id) ON DELETE SET NULL,
+    owner_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    model TEXT DEFAULT 'gemini-3.6-pro',
+    provider TEXT DEFAULT 'google',
+    system_prompt TEXT DEFAULT 'You are an autonomous AI coding subagent.',
+    temperature NUMERIC DEFAULT 0.7,
+    max_tokens INT DEFAULT 4096,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'idle', 'paused', 'running', 'error')),
+    avatar TEXT DEFAULT 'bot',
+    color TEXT DEFAULT '#6E56CF',
+    tools_enabled JSONB DEFAULT '["code_search", "file_edit", "terminal"]'::jsonb,
+    permissions JSONB DEFAULT '{"can_read": true, "can_write": true, "can_execute": true}'::jsonb,
+    memory_enabled BOOLEAN DEFAULT true,
+    vector_namespace TEXT DEFAULT 'default',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.agents ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.agent_runs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id UUID NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    status TEXT DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+    input JSONB DEFAULT '{}'::jsonb,
+    output JSONB DEFAULT '{}'::jsonb,
+    error TEXT,
+    tokens_prompt INT DEFAULT 0,
+    tokens_completion INT DEFAULT 0,
+    latency_ms INT DEFAULT 0,
+    cost NUMERIC DEFAULT 0,
+    started_at TIMESTAMPTZ DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+
+ALTER TABLE public.agent_runs ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.agent_memory (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id UUID NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
+    memory_key TEXT NOT NULL,
+    memory_value JSONB NOT NULL,
+    importance NUMERIC DEFAULT 1.0,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_agent_memory_key UNIQUE (agent_id, memory_key)
+);
+
+ALTER TABLE public.agent_memory ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.agent_tools (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    agent_id UUID NOT NULL REFERENCES public.agents(id) ON DELETE CASCADE,
+    tool_name TEXT NOT NULL,
+    enabled BOOLEAN DEFAULT true,
+    permissions JSONB DEFAULT '{}'::jsonb,
+    configuration JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    CONSTRAINT unique_agent_tool UNIQUE (agent_id, tool_name)
+);
+
+ALTER TABLE public.agent_tools ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.knowledge_documents (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES public.projects(id) ON DELETE SET NULL,
+    uploaded_by UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    mime_type TEXT DEFAULT 'text/plain',
+    size INT DEFAULT 0,
+    status TEXT DEFAULT 'indexed' CHECK (status IN ('uploading', 'processing', 'indexed', 'error')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.knowledge_documents ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.knowledge_chunks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    document_id UUID NOT NULL REFERENCES public.knowledge_documents(id) ON DELETE CASCADE,
+    chunk_index INT NOT NULL,
+    content TEXT NOT NULL,
+    embedding vector(1536),
+    metadata JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.knowledge_chunks ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.chat_sessions (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID NOT NULL REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    project_id UUID REFERENCES public.projects(id) ON DELETE SET NULL,
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    title TEXT DEFAULT 'New AI Workspace Chat',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.chat_sessions ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.chat_messages (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    session_id UUID NOT NULL REFERENCES public.chat_sessions(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
+    content TEXT NOT NULL,
+    code_snippet TEXT,
+    tokens INT DEFAULT 0,
+    cost NUMERIC DEFAULT 0,
+    latency_ms INT DEFAULT 0,
+    attachments JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.chat_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE IF NOT EXISTS public.ai_audit_logs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    workspace_id UUID REFERENCES public.workspaces(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+    agent_id UUID REFERENCES public.agents(id) ON DELETE SET NULL,
+    document_id UUID REFERENCES public.knowledge_documents(id) ON DELETE SET NULL,
+    action TEXT NOT NULL,
+    details JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.ai_audit_logs ENABLE ROW LEVEL SECURITY;
+
+-- Phase 4 RLS Policies
+DROP POLICY IF EXISTS "Workspace members can view agents" ON public.agents;
+CREATE POLICY "Workspace members can view agents" ON public.agents
+    FOR SELECT USING (
+        owner_id = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = agents.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = agents.workspace_id AND user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Workspace members can manage agents" ON public.agents;
+CREATE POLICY "Workspace members can manage agents" ON public.agents
+    FOR ALL USING (
+        owner_id = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = agents.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = agents.workspace_id AND user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Workspace members view agent runs" ON public.agent_runs;
+CREATE POLICY "Workspace members view agent runs" ON public.agent_runs
+    FOR SELECT USING (
+        user_id = auth.uid() OR
+        EXISTS (
+            SELECT 1 FROM public.agents
+            WHERE id = agent_runs.agent_id AND (
+                owner_id = auth.uid() OR
+                workspace_id IN (SELECT id FROM public.workspaces WHERE owner_id = auth.uid()) OR
+                workspace_id IN (SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid())
+            )
+        )
+    );
+
+DROP POLICY IF EXISTS "Users execute agent runs" ON public.agent_runs;
+CREATE POLICY "Users execute agent runs" ON public.agent_runs
+    FOR INSERT WITH CHECK (
+        user_id = auth.uid() OR user_id IS NULL
+    );
+
+DROP POLICY IF EXISTS "Workspace members view documents" ON public.knowledge_documents;
+CREATE POLICY "Workspace members view documents" ON public.knowledge_documents
+    FOR SELECT USING (
+        uploaded_by = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = knowledge_documents.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = knowledge_documents.workspace_id AND user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Workspace members upload documents" ON public.knowledge_documents;
+CREATE POLICY "Workspace members upload documents" ON public.knowledge_documents
+    FOR ALL USING (
+        uploaded_by = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = knowledge_documents.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = knowledge_documents.workspace_id AND user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Workspace members view chunks" ON public.knowledge_chunks;
+CREATE POLICY "Workspace members view chunks" ON public.knowledge_chunks
+    FOR ALL USING (
+        EXISTS (
+            SELECT 1 FROM public.knowledge_documents
+            WHERE id = knowledge_chunks.document_id AND (
+                uploaded_by = auth.uid() OR
+                workspace_id IN (SELECT id FROM public.workspaces WHERE owner_id = auth.uid()) OR
+                workspace_id IN (SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid())
+            )
+        )
+    );
+
+DROP POLICY IF EXISTS "Users manage chat sessions" ON public.chat_sessions;
+CREATE POLICY "Users manage chat sessions" ON public.chat_sessions
+    FOR ALL USING (
+        user_id = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = chat_sessions.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = chat_sessions.workspace_id AND user_id = auth.uid())
+    );
+
+DROP POLICY IF EXISTS "Users manage chat messages" ON public.chat_messages;
+CREATE POLICY "Users manage chat messages" ON public.chat_messages
+    FOR ALL USING (
+        user_id = auth.uid() OR
+        EXISTS (
+            SELECT 1 FROM public.chat_sessions
+            WHERE id = chat_messages.session_id AND (
+                user_id = auth.uid() OR
+                workspace_id IN (SELECT id FROM public.workspaces WHERE owner_id = auth.uid()) OR
+                workspace_id IN (SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid())
+            )
+        )
+    );
+
+DROP POLICY IF EXISTS "Workspace members view AI audit logs" ON public.ai_audit_logs;
+CREATE POLICY "Workspace members view AI audit logs" ON public.ai_audit_logs
+    FOR SELECT USING (
+        user_id = auth.uid() OR
+        EXISTS (SELECT 1 FROM public.workspaces WHERE id = ai_audit_logs.workspace_id AND owner_id = auth.uid()) OR
+        EXISTS (SELECT 1 FROM public.workspace_members WHERE workspace_id = ai_audit_logs.workspace_id AND user_id = auth.uid())
+    );
