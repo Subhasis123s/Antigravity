@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { Bot, Send, Sparkles, Copy, Check, Trash2 } from "lucide-react";
+import { Bot, Send, Sparkles, Copy, Check, Trash2, Cpu } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ChatMessage } from "@/types/chat";
@@ -15,6 +15,7 @@ export const AIChatView: React.FC = () => {
   const [model, setModel] = useState("gemini-3.6-pro");
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
 
   const fetchChatData = async () => {
     try {
@@ -43,6 +44,7 @@ export const AIChatView: React.FC = () => {
     const userPrompt = input.trim();
     setInput("");
     setIsTyping(true);
+    setStreamingStatus("Initializing SSE Stream...");
 
     try {
       const wsRes = await fetch("/api/workspace");
@@ -58,9 +60,9 @@ export const AIChatView: React.FC = () => {
         return;
       }
 
-      // Optimistic user message update
-      const tempUserMsg: ChatMessage = {
-        id: "temp_" + Date.now(),
+      // Add optimistic User Message
+      const userMsg: ChatMessage = {
+        id: "usr_" + Date.now(),
         session_id: sessionId || "temp_session",
         role: "user",
         content: userPrompt,
@@ -69,9 +71,24 @@ export const AIChatView: React.FC = () => {
         latency_ms: 0,
         created_at: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, tempUserMsg]);
 
-      const res = await fetch("/api/chat", {
+      const assistantMsgId = "ast_" + Date.now();
+      const assistantMsg: ChatMessage = {
+        id: assistantMsgId,
+        session_id: sessionId || "temp_session",
+        role: "assistant",
+        content: "",
+        code_snippet: "",
+        tokens: 0,
+        cost: 0,
+        latency_ms: 0,
+        created_at: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+
+      // Connect to Real-Time SSE Stream Endpoint
+      const response = await fetch("/api/chat/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -82,22 +99,55 @@ export const AIChatView: React.FC = () => {
         }),
       });
 
-      const json = await res.json();
-      if (json.success && json.data?.assistantMessage) {
-        if (!sessionId && json.data.userMessage?.session_id) {
-          setSessionId(json.data.userMessage.session_id);
-        }
+      if (!response.body) throw new Error("No SSE response body");
 
-        setMessages((prev) => [
-          ...prev.filter((m) => m.id !== tempUserMsg.id),
-          json.data.userMessage,
-          json.data.assistantMessage,
-        ]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = "";
+      let accumulatedCode = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunkText = decoder.decode(value);
+        const lines = chunkText.split("\n\n");
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+
+          if (line.includes("event: status")) {
+            const dataMatch = line.match(/data: (.*)/);
+            if (dataMatch) {
+              const data = JSON.parse(dataMatch[1]);
+              setStreamingStatus(data.message);
+            }
+          } else if (line.includes("event: token")) {
+            const dataMatch = line.match(/data: (.*)/);
+            if (dataMatch) {
+              const data = JSON.parse(dataMatch[1]);
+              accumulatedText += data.text;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMsgId ? { ...m, content: accumulatedText } : m))
+              );
+            }
+          } else if (line.includes("event: code")) {
+            const dataMatch = line.match(/data: (.*)/);
+            if (dataMatch) {
+              const data = JSON.parse(dataMatch[1]);
+              accumulatedCode = data.code;
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMsgId ? { ...m, code_snippet: accumulatedCode } : m))
+              );
+            }
+          }
+        }
       }
     } catch (err) {
-      console.error("Failed to send chat message", err);
+      console.error("SSE stream error", err);
     } finally {
       setIsTyping(false);
+      setStreamingStatus(null);
     }
   };
 
@@ -128,9 +178,9 @@ export const AIChatView: React.FC = () => {
           </div>
           <div>
             <div className="text-sm font-bold text-white flex items-center gap-2">
-              AI Swarm Chat <Badge variant="success">Active</Badge>
+              AI Swarm Chat <Badge variant="success">SSE Streaming</Badge>
             </div>
-            <div className="text-[10px] text-text-secondary">Connected to RAG Knowledge Vault & Vector Engine</div>
+            <div className="text-[10px] text-text-secondary">Connected to Multi-Provider Engine & RAG Vault</div>
           </div>
         </div>
 
@@ -140,9 +190,12 @@ export const AIChatView: React.FC = () => {
             onChange={(e) => setModel(e.target.value)}
             className="px-3 py-1.5 rounded-xl bg-surface border border-border text-xs text-white focus:outline-none"
           >
-            <option value="gemini-3.6-pro">Gemini 3.6 Pro (Recommended)</option>
-            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+            <option value="gemini-3.6-pro">Gemini 3.6 Pro</option>
             <option value="gpt-4o">OpenAI GPT-4o</option>
+            <option value="claude-3.5-sonnet">Claude 3.5 Sonnet</option>
+            <option value="llama-3.3-70b">Groq Llama 3.3 70B</option>
+            <option value="deepseek-r1">OpenRouter DeepSeek R1</option>
+            <option value="ollama-local-llama3">Ollama Local Llama 3</option>
           </select>
 
           <button
@@ -160,9 +213,9 @@ export const AIChatView: React.FC = () => {
         {messages.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-center space-y-3 text-text-secondary">
             <Sparkles className="h-10 w-10 text-primary-light opacity-40 animate-pulse" />
-            <h3 className="text-base font-bold text-white">Start AI Swarm Conversation</h3>
+            <h3 className="text-base font-bold text-white">Start Multi-Provider AI OS Chat</h3>
             <p className="text-xs max-w-sm">
-              Ask AI subagents to refactor code, run vector semantic search, or audit system security.
+              Real-time SSE token streaming across Gemini, OpenAI, Claude, Groq, DeepSeek, and Ollama.
             </p>
           </div>
         ) : (
@@ -181,7 +234,7 @@ export const AIChatView: React.FC = () => {
                       : "bg-surface border border-border text-white space-y-3"
                   }`}
                 >
-                  <p className="whitespace-pre-wrap">{m.content}</p>
+                  <p className="whitespace-pre-wrap">{m.content || (isTyping && m.role === "assistant" ? "..." : "")}</p>
 
                   {m.code_snippet && (
                     <div className="relative rounded-xl bg-black/60 border border-border p-3 font-mono text-[11px] text-primary-light overflow-x-auto">
@@ -206,8 +259,8 @@ export const AIChatView: React.FC = () => {
 
         {isTyping && (
           <div className="flex items-center gap-2 text-xs text-text-secondary font-mono animate-pulse">
-            <Bot className="h-4 w-4 text-primary-light animate-spin" />
-            <span>Subagent Swarm is querying knowledge base and generating response...</span>
+            <Cpu className="h-4 w-4 text-emerald-400 animate-spin" />
+            <span>{streamingStatus || "Streaming AI tokens..."}</span>
           </div>
         )}
       </div>
@@ -218,7 +271,7 @@ export const AIChatView: React.FC = () => {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask AI Swarm to write code, search knowledge base, or run security audit..."
+          placeholder="Ask AI Swarm across Gemini, OpenAI, Claude, Groq, DeepSeek, or Ollama..."
           className="flex-1 px-4 py-3 rounded-xl glass-input text-xs"
         />
         <Button type="submit" variant="glow" icon={<Send className="h-4 w-4" />}>
