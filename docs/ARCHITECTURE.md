@@ -1,339 +1,348 @@
 # Antigravity AI OS Architecture
 
----
+Antigravity AI OS is engineered as a high-performance, enterprise-grade AI Operating System and multi-agent swarm workspace. The platform provides real-time AI execution, bank-grade cryptographic secret isolation, high-density vector retrieval, and operational telemetry. 
 
-## 1. Executive Overview
-
-Antigravity AI OS is a production-certified enterprise AI Operating System and Multi-Agent Swarm Workspace designed for autonomous AI execution, high-density vector retrieval, encrypted credential management, and real-time observability.
-
-### Architecture Style
-- **Full-Stack Next.js 15 App Router Architecture**: Leverages Server Components for data fetching and SSR layout rendering, with `"use client"` scoped strictly to interactive primitives.
-- **Serverless API Layer**: Utilizes Next.js Route Handlers (`/api/*`) for stateless REST and Server-Sent Events (SSE) token streaming.
-- **Decoupled Backend Engine**: Built on Supabase (PostgreSQL 15) with native Vector extensions (`pgvector`), non-recursive Row Level Security (RLS), and automated Web Crypto AES-256-GCM secret encryption.
-
-### Core Design Principles
-1. **Zero-Trust Multitenancy**: Multitenant isolation enforced at the database layer via RLS policies without recursive self-joins.
-2. **Real-Time Telemetry & Non-Blocking Streams**: Low-latency, token-by-token streaming via asynchronous `ReadableStream` decoders off the main UI thread.
-3. **Hardware-Accelerated UX**: Framer Motion 60 FPS spring physics with WCAG AA accessibility compliance.
-4. **Strict Type Safety & Contract Integrity**: Shared TypeScript schemas across frontend React state and backend API response payloads.
+The architecture follows strict **SOLID**, **DRY**, and **Clean Architecture** principles, prioritizing modularity, stateless serverless execution, and multi-tenant security guarantees.
 
 ---
 
-## 2. High-Level System Architecture
+## 🏛️ System Overview
 
-```
-+-----------------------------------------------------------------------------------+
-|                                    USER BROWSER                                   |
-|  Next.js 15 App Router | React 19 | Framer Motion | Tailwind CSS | AuthContext    |
-+-----------------------------------------+-----------------------------------------+
-                                          |
-                                          v (HTTP REST / SSE Token Streams)
-+-----------------------------------------+-----------------------------------------+
-|                              NEXT.JS SERVER ROUTER                                |
-|  middleware.ts (SSR Session Guard) | Web Stream Decoders | AES-256 Crypto Engine |
-+-----------------------------------------+-----------------------------------------+
-                                          |
-            +-----------------------------+-----------------------------+
-            |                                                           |
-            v                                                           v
-+-----------+-----------------------------+             +---------------+-----------+
-|          BACKEND ROUTE HANDLERS         |             |   AES-256-GCM CRYPTO VAULT|
-|  /api/chat/stream                       |             |   Web Crypto Secrets Engine|
-|  /api/agents/[id]/stream                |             +---------------------------+
-|  /api/knowledge/upload                  |
-|  /api/observability/metrics             |
-|  /api/jobs                              |
-+-----------+-----------------------------+
-            |
-            +-----------------------------+-----------------------------+
-            |                                                           |
-            v                                                           v
-+-----------+-----------------------------+             +---------------+-----------+
-|               SUPABASE / POSTGRESQL             |             |   EXTERNAL AI PROVIDERS   |
-|  6 Enterprise Tables | pgvector Embeddings |             |   OpenAI | Anthropic      |
-|  Non-Recursive Row Level Security (RLS) |             |   Gemini | DeepSeek | Groq|
-+-----------------------------------------+             +---------------------------+
+Antigravity AI OS combines a modern Next.js 15 App Router frontend with a serverless backend layer, connected to Supabase PostgreSQL for persistent multi-tenant data storage, vector embeddings, and authentication.
+
+```mermaid
+graph TD
+    User["👤 Browser Client (React 19 / Framer Motion / Tailwind CSS)"] -->|HTTP REST / SSE Token Streams| NextServer["🚀 Next.js 15 App Router (SSR & Middleware)"]
+    
+    subgraph "Server Environment"
+        NextServer --> Middleware["🔒 Auth Middleware (@supabase/ssr)"]
+        NextServer --> REST_APIs["🌐 Serverless API Routes (/api/*)"]
+        NextServer --> AES_Vault["🔐 AES-256-GCM Crypto Engine"]
+    end
+    
+    subgraph "Data & Storage Tier"
+        REST_APIs -->|PostgreSQL & PgVector| Supabase["⚡ Supabase DB (6 Enterprise Tables)"]
+        Supabase --> RLS["🛡️ Non-Recursive RLS Policies"]
+    end
+    
+    subgraph "AI & External Providers"
+        REST_APIs -->|SSE Web Streams| LLM_Providers["🤖 Multi-Provider LLMs (OpenAI, Anthropic, Gemini)"]
+    end
 ```
 
----
-
-## 3. Frontend Architecture
-
-### Next.js 15 App Router Layouts
-- **`src/app/layout.tsx`**: Root layout encapsulating global dark mode styles, typography fonts, and `AuthProvider` context wrappers.
-- **`src/app/dashboard/layout.tsx`**: Protected shell containing the interactive sidebar, top header, command palette modal container, and active view switcher.
-
-### Server Components vs. Client Components
-- **Server Components (`src/app/page.tsx`, `src/app/dashboard/page.tsx`)**: Handle static shell rendering, SSR meta descriptions, and initial layout hydration without shipping unnecessary JS bundles.
-- **Client Components (`src/components/dashboard/*`)**: Declared with `"use client"` for local React state management, mouse/keyboard event handling, Framer Motion animations, and SSE Web Stream reader loops.
-
-### Context Providers & State Management
-- **`AuthContext.tsx`**: Manages Supabase user session state, login/logout callbacks, and session token hydration.
-- **Local View State**: Tab switching managed dynamically inside `src/app/dashboard/page.tsx` rendering specific view frames (`AIChatView`, `AgentsView`, `KnowledgeBaseView`, `SecretsView`, `ObservabilityView`, `BillingView`, `ProfileView`, `ScheduledTasksView`).
+### Layer Responsibilities
+- **Client Tier**: React 19 Client Components providing interactive UI frames, 60 FPS Framer Motion animations, keyboard shortcuts (`Cmd + K`, `Cmd + S`, `Esc`), and WCAG AA accessible components.
+- **Frontend Server Tier**: Next.js 15 Server Components rendering layout scaffolding, server-side data fetching, and SSR cookie session validation.
+- **Backend API Tier**: Serverless REST and Server-Sent Events (SSE) streaming handlers for AI chat, agent swarm telemetry, vector uploads, secrets encryption, and observability.
+- **Security & Crypto Tier**: Web Crypto API engine executing AES-256-GCM key wrapping before database writes.
+- **Database Tier**: Supabase PostgreSQL database hosting 6 enterprise tables, vector embeddings, B-Tree indexes, and non-recursive RLS policy gates.
 
 ---
 
-## 4. Backend Architecture
+## 🔄 High-Level Request Flow
 
-### 1. Chat Module (`/api/chat`, `/api/chat/stream`)
-- **Purpose**: Real-time multi-model chat streaming endpoint.
-- **Responsibilities**: Validates prompt request payload, parses provider selection, streams LLM completion tokens via Server-Sent Events (SSE), and logs token usage.
+The following diagram illustrates how requests flow from client interaction through authentication middleware to API services, external LLM stream providers, and database persistence.
 
-### 2. Agents Module (`/api/agents`, `/api/agents/[id]/stream`, `/api/agents/[id]/run`, `/api/agents/[id]/cancel`)
-- **Purpose**: Multi-agent swarm orchestration.
-- **Responsibilities**: Manages agent swarm configurations, streams agent execution thought logs, and provides async cancellation signals.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Browser
+    participant Middleware as Next.js Middleware
+    participant Route as API Route (/api/chat/stream)
+    participant Crypto as AES Crypto Vault
+    participant DB as Supabase PostgreSQL
+    participant LLM as External LLM Provider
 
-### 3. Knowledge Base Module (`/api/knowledge`, `/api/knowledge/upload`, `/api/knowledge/query`)
-- **Purpose**: Vector RAG document vault.
-- **Responsibilities**: Ingests files, generates vector embeddings, stores chunks in PostgreSQL (`pgvector`), and executes cosine similarity searches.
-
-### 4. Secrets Module (`/api/secrets`)
-- **Purpose**: Bank-grade encrypted credential manager.
-- **Responsibilities**: Encrypts API keys server-side using AES-256-GCM before writing to `workspace_secrets`, and returns masked key previews for client display.
-
-### 5. Observability Module (`/api/observability/metrics`)
-- **Purpose**: Real-time system telemetry and health metrics.
-- **Responsibilities**: Gathers CPU/memory indicators, token consumption progress bars, active agent swarms, and provider circuit breaker statuses.
-
-### 6. Background Jobs Module (`/api/jobs`)
-- **Purpose**: Asynchronous worker queue manager.
-- **Responsibilities**: Enqueues, tracks, and logs background tasks in the `background_jobs` and `job_logs` tables.
-
----
-
-## 5. Authentication Flow
-
-```
-[ User Browser ] -----> 1. Submit Credentials -----> [ /api/auth/login ]
-       |                                                    |
-       |                                                    v
-       |<----- 2. Return Session Cookie & Access Token <----+ (Supabase Auth)
-       |
-       v
-[ Request /dashboard ] -----> 3. Execute middleware.ts Guard Check
-                                        |
-                 +----------------------+----------------------+
-                 |                                             |
-         (Valid Session)                               (Invalid Session)
-                 v                                             v
-[ Render /dashboard Shell ]                    [ Redirect to /login ]
+    User->>Middleware: POST /api/chat/stream (Bearer Cookie / JWT)
+    Middleware->>Middleware: Validate Session & Cookie Auth
+    alt Session Invalid
+        Middleware-->>User: 401 Unauthorized / Redirect /login
+    else Session Valid
+        Middleware->>Route: Pass Request to Route Handler
+        Route->>Crypto: Fetch & Decrypt Workspace API Key (AES-256-GCM)
+        Crypto->>DB: Query Encrypted Secret
+        DB-->>Crypto: Return Encrypted Bytes
+        Crypto-->>Route: Return Plaintext Provider Key
+        Route->>LLM: Open ReadableStream Connection
+        LLM-->>Route: Stream Chunk (event: token)
+        Route-->>User: SSE Chunk (data: {"token": "..."})
+        LLM-->>Route: Stream End (event: completion)
+        Route->>DB: Log Token Usage Metrics
+        Route-->>User: SSE Stream End Signal
+    end
 ```
 
-- **Supabase SSR Auth**: Session state managed via `@supabase/ssr` cookies.
-- **`middleware.ts`**: Edge middleware intercepts protected routes (`/dashboard/*`) and enforces login redirects when session cookies are missing or expired.
+---
+
+## 💻 Frontend Architecture
+
+The frontend is built on Next.js 15 App Router and React 19, utilizing Server Components for page rendering and Client Components for interactive UI frames.
+
+```
+src/
+├── app/                        # Next.js 15 App Router Routes
+│   ├── api/                    # Serverless API Endpoints (REST & SSE)
+│   ├── dashboard/              # Protected Enterprise Dashboard Shell
+│   ├── login/                  # User Sign-In Page
+│   ├── signup/                 # Registration Page
+│   └── page.tsx                # Public Landing Page
+├── components/
+│   ├── dashboard/              # 16 Specialized Dashboard View Frames
+│   └── ui/                     # Reusable Glassmorphic UI Primitives
+├── lib/                        # Crypto, Supabase, & Streaming Helper Utilities
+└── types/                      # TypeScript Interfaces & Contract Models
+```
+
+### Component Categories
+1. **Server Components (`app/page.tsx`, `app/dashboard/layout.tsx`)**: Responsible for initial SSR HTML rendering, cookie session verification, and static asset delivery.
+2. **Client Component View Frames (`components/dashboard/*View.tsx`)**: Isolated interactive frames for AI Chat, Subagent Swarms, Knowledge Base RAG Search, Secrets Manager, Observability, and Billing.
+3. **UI Primitives (`components/ui/*`)**: Reusable design primitives (`GlassCard`, `Button`, `Badge`, `Skeleton`, `Toast`, `SpotlightEffect`).
+
+### State & Context Architecture
+- **AuthContext**: Provides global user identity, session state, and workspace context throughout the client tree.
+- **Local Reactive State**: Component-level state manages form controls, SSE buffer tokens, drawer visibility, and modal dialogs.
 
 ---
 
-## 6. AI System Architecture
+## ⚙️ Backend Architecture
 
-### Multi-Provider Abstraction
-The system abstracts multiple AI providers behind a unified streaming interface:
-- **Supported Providers**: OpenAI, Anthropic, Gemini, DeepSeek, Groq.
-- **Provider Resilience**: Automated fallback handling when a provider returns rate limits or service degradation errors.
+The backend consists of serverless API route handlers located in `src/app/api/`. These endpoints process requests asynchronously and stream token responses using Server-Sent Events (SSE).
 
-### Streaming Pipeline
-1. Client sends request to `/api/chat/stream`.
-2. Server opens an HTTP connection with `Content-Type: text/event-stream`.
-3. Server streams chunks formatted as `event: token\ndata: {"token": "..."}\n\n`.
-4. Client uses native `TextDecoder` and `ReadableStream.getReader()` to parse tokens asynchronously without freezing the UI thread.
+### Certified Backend API Routes
+
+| Endpoint Route | Method | Protocol | Description |
+|---|---|---|---|
+| `/api/chat/stream` | `POST` | SSE | Token-by-token real-time streaming chat completion |
+| `/api/agents/[id]/stream` | `POST` | SSE | Real-time subagent swarm run execution telemetry |
+| `/api/agents` | `GET`, `POST` | REST | Fetch active agent swarms or trigger a new agent swarm |
+| `/api/agents/[id]/cancel` | `POST` | REST | Asynchronously terminate a running subagent swarm |
+| `/api/knowledge/upload` | `POST` | REST | Ingest document, generate vector embeddings, & save to database |
+| `/api/knowledge/query` | `POST` | REST | Execute cosine similarity vector search over vault documents |
+| `/api/secrets` | `GET`, `POST` | REST | Manage AES-256-GCM encrypted workspace API keys |
+| `/api/observability/metrics` | `GET` | REST | Fetch system latency, token usage, and circuit breaker metrics |
+| `/api/jobs` | `GET`, `POST` | REST | Monitor background queue jobs, retry attempts, and execution logs |
+| `/api/profile` | `GET`, `PUT` | REST | Read and update user profile preferences |
+| `/api/docs` | `GET` | OpenAPI | Interactive OpenAPI 3.0.3 API specification |
 
 ---
 
-## 7. Database Architecture
+## 🗄️ Database Architecture
 
-### Master Database Schema (`supabase/schema.sql`)
+Antigravity AI OS utilizes PostgreSQL hosted on Supabase, featuring 6 core enterprise tables, vector embeddings via `pgvector`, composite B-Tree indexes, and non-recursive Row Level Security (RLS) policies.
 
+```mermaid
+erDiagram
+    WORKSPACES ||--o{ WORKSPACE_SECRETS : "stores encrypted keys"
+    WORKSPACES ||--o{ WORKSPACE_FILES : "contains vector documents"
+    WORKSPACES ||--o{ WORKSPACE_USAGE : "tracks token usage"
+    WORKSPACES ||--o{ BACKGROUND_JOBS : "queues workers"
+    BACKGROUND_JOBS ||--o{ JOB_LOGS : "emits logs"
+    PROVIDER_HEALTH ||--o{ WORKSPACES : "monitors circuit breakers"
+
+    WORKSPACES {
+        uuid id PK
+        string name
+        uuid owner_id FK
+        timestamp created_at
+    }
+
+    WORKSPACE_SECRETS {
+        uuid id PK
+        uuid workspace_id FK
+        string provider_name
+        text encrypted_api_key
+        text key_preview
+        timestamp updated_at
+    }
+
+    WORKSPACE_FILES {
+        uuid id PK
+        uuid workspace_id FK
+        string filename
+        string mime_type
+        integer file_size
+        vector embedding
+        timestamp created_at
+    }
+
+    BACKGROUND_JOBS {
+        uuid id PK
+        uuid workspace_id FK
+        string job_type
+        string status
+        integer retry_count
+        timestamp created_at
+    }
+
+    JOB_LOGS {
+        uuid id PK
+        uuid job_id FK
+        string log_level
+        text message
+        timestamp created_at
+    }
+
+    WORKSPACE_USAGE {
+        uuid id PK
+        uuid workspace_id FK
+        integer token_count
+        numeric cost_estimate
+        timestamp period_start
+    }
+
+    PROVIDER_HEALTH {
+        uuid id PK
+        string provider_name
+        string status
+        integer latency_ms
+        numeric error_rate
+        timestamp checked_at
+    }
 ```
-+-------------------+        +-----------------------+        +---------------------+
-|    workspaces     |<-------|   workspace_secrets   |        |   workspace_files   |
-+-------------------+        +-----------------------+        +---------------------+
-| id (PK)           |        | id (PK)               |        | id (PK)             |
-| name              |        | workspace_id (FK)     |        | workspace_id (FK)   |
-| owner_id (FK)     |        | secret_key            |        | file_name           |
-| created_at        |        | encrypted_value       |        | file_path           |
-+-------------------+        +-----------------------+        +---------------------+
-          ^
-          |                  +-----------------------+        +---------------------+
-          +------------------|    background_jobs    |        |   provider_health   |
-          |                  +-----------------------+        +---------------------+
-          |                  | id (PK)               |        | id (PK)             |
-          |                  | workspace_id (FK)     |        | provider_name       |
-          |                  | status                |        | status              |
-          |                  +-----------------------+        +---------------------+
-          |                              ^
-          |                              |
-          |                  +-----------+-----------+
-          |                  |       job_logs        |
-          +------------------+-----------------------+
-                             | id (PK)               |
-                             | job_id (FK)           |
-                             | message               |
-                             +-----------------------+
-```
 
-### Row Level Security (RLS) Non-Recursive Policies
-To prevent database `ERROR 42P17` infinite recursion:
+### RLS Non-Recursive Security Pattern
+To prevent PostgreSQL recursion errors (`ERROR 42P17`), all RLS policies enforce access using explicit subqueries against parent tables (`workspaces` and `workspace_members`):
+
 ```sql
--- Non-recursive policy asserting workspace ownership via parent subquery
 CREATE POLICY "Users can manage workspace secrets" ON workspace_secrets
   FOR ALL USING (
     EXISTS (
-      SELECT 1 FROM workspaces 
-      WHERE workspaces.id = workspace_secrets.workspace_id 
-      AND workspaces.owner_id = auth.uid()
+      SELECT 1 FROM public.workspaces 
+      WHERE id = workspace_secrets.workspace_id AND owner_id = auth.uid()
     )
   );
 ```
 
 ---
 
-## 8. API Architecture
+## 🔑 Authentication Flow
 
-| Endpoint | Method | Auth Required | Response Type | Purpose |
-|---|---|---|---|---|
-| `/api/auth/login` | `POST` | No | `JSON` | Authenticate user session |
-| `/api/auth/signup` | `POST` | No | `JSON` | Register new user account |
-| `/api/auth/logout` | `POST` | Yes | `JSON` | Terminate session cookies |
-| `/api/chat/stream` | `POST` | Yes | `text/event-stream` | Stream AI chat completions |
-| `/api/agents/[id]/stream` | `GET` | Yes | `text/event-stream` | Stream subagent execution logs |
-| `/api/knowledge/upload` | `POST` | Yes | `JSON` | Ingest vector documents |
-| `/api/knowledge/query` | `POST` | Yes | `JSON` | Cosine vector similarity search |
-| `/api/secrets` | `GET`, `POST`, `DELETE` | Yes | `JSON` | AES-256 encrypted key manager |
-| `/api/observability/metrics` | `GET` | Yes | `JSON` | System telemetry & metrics |
-| `/api/jobs` | `GET`, `POST` | Yes | `JSON` | Worker job queue manager |
-| `/api/profile` | `GET`, `PUT` | Yes | `JSON` | Manage user profile settings |
-| `/api/docs` | `GET` | No | `JSON` | OpenAPI 3.0.3 Specification |
+Authentication is managed via `@supabase/ssr` with server-side cookie verification.
 
----
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as User Browser
+    participant Page as Next.js Router
+    participant Middleware as updateSession Middleware
+    participant Auth as Supabase Auth
 
-## 9. Security Architecture
-
-1. **Web Crypto AES-256-GCM Vault**: Secret keys are encrypted server-side using Web Crypto API master keys before writing to disk.
-2. **Strict RLS Multi-Tenancy**: Tenant data isolation enforced at the PostgreSQL engine level.
-3. **XSS & Markdown Sanitization**: AI chat outputs escape unsafe HTML tags before DOM injection.
-4. **Zero Client Token Exposure**: API keys and service role keys are strictly bound to server-side Node runtime environments.
-
----
-
-## 10. Streaming Architecture
-
-```
-[ Client ] ---- 1. POST /api/chat/stream ----> [ Next.js Route Handler ]
-    |                                                      |
-    | <---- 2. Open HTTP Event Stream (200 OK) ------------+
-    |
-    | <---- 3. Chunk: event: status\ndata: {"status": "thinking"}
-    | <---- 4. Chunk: event: token\ndata: {"token": "Hello"}
-    | <---- 5. Chunk: event: token\ndata: {"token": " World"}
-    | <---- 6. Chunk: event: completion\ndata: {"done": true}
-    |
-[ UI Render Token Stream ]
+    User->>Page: Navigate to /dashboard
+    Page->>Middleware: Intercept Request
+    Middleware->>Auth: Read Session Cookies & getUser()
+    alt Session Valid
+        Auth-->>Middleware: Return User Session
+        Middleware-->>Page: Allow Access to /dashboard
+        Page-->>User: Render Dashboard Shell
+    else Session Missing / Invalid
+        Auth-->>Middleware: Return null
+        Middleware-->>User: HTTP 307 Redirect to /login?redirect=/dashboard
+    end
 ```
 
-- **Cancellation Support**: Closing the HTTP reader terminates the upstream connection without dangling server processes.
+---
+
+## 🤖 AI & RAG Architecture
+
+The AI layer supports multi-provider model routing, Server-Sent Events token streaming, and Retrieval-Augmented Generation (RAG).
+
+```mermaid
+graph LR
+    UserRequest["📄 User Query / Prompt"] --> RouteHandler["⚡ /api/chat/stream"]
+    RouteHandler --> RAGQuery["🔍 /api/knowledge/query"]
+    RAGQuery --> VectorSearch["🧠 pgvector Cosine Search"]
+    VectorSearch -- "Top K Relevant Chunks" --> RouteHandler
+    RouteHandler --> InjectContext["📝 Context Augmented Prompt"]
+    InjectContext --> LLMProvider["🤖 Multi-Provider Router (OpenAI/Anthropic/Gemini)"]
+    LLMProvider --> ReadableStream["🌊 SSE Token Stream Response"]
+    ReadableStream --> UserBrowser["💻 Client UI Buffer"]
+```
 
 ---
 
-## 11. Folder Structure
+## 🔒 Security Architecture
+
+1. **AES-256-GCM Cryptographic Isolation**: Workspace provider API keys are encrypted server-side using Web Crypto API (`src/lib/crypto.ts`) prior to SQL storage.
+2. **Row Level Security (RLS)**: Enforced on all 6 database tables, strictly isolating multi-tenant data by workspace ownership.
+3. **Session Cookie Guards**: Protected routes (`/dashboard/*`, `/settings/*`, `/billing/*`) are enforced server-side via Next.js SSR middleware.
+4. **Sanitized Output Rendering**: Code blocks in AI responses are rendered safely with XSS protection and string sanitization.
+
+---
+
+## 📁 File & Directory Layout
 
 ```
 D:\Projects\Antigravity
 ├── src/
-│   ├── app/                      # Next.js 15 App Router Routes
-│   │   ├── api/                  # Serverless API Route Handlers
-│   │   ├── dashboard/            # Protected Dashboard Shell
-│   │   ├── login/                # Authentication Sign-In Page
-│   │   └── signup/               # Registration Page
+│   ├── app/                        # Next.js 15 App Router Routes & APIs
+│   │   ├── api/                    # Serverless REST & SSE Endpoints
+│   │   ├── dashboard/              # Protected Dashboard Shell
+│   │   ├── login/                  # Sign-In Page
+│   │   ├── signup/                 # User Registration Page
+│   │   ├── layout.tsx              # Root HTML Scaffolding
+│   │   └── page.tsx                # Public Landing Page
 │   ├── components/
-│   │   ├── dashboard/            # 16 Specialized Dashboard View Components
-│   │   └── ui/                   # Reusable Glassmorphic UI Primitives
-│   ├── lib/                      # Supabase, Crypto, and Utility Functions
-│   └── types/                    # Shared TypeScript Type Declarations
+│   │   ├── dashboard/              # 16 Dashboard View Components
+│   │   └── ui/                     # Glassmorphic UI Primitives
+│   ├── lib/                        # Crypto, Supabase, & SSE Streaming Helpers
+│   │   ├── crypto.ts               # AES-256-GCM Encryption Engine
+│   │   └── supabase/               # Client, Server, & Middleware Supabase Helpers
+│   └── types/                      # Shared TypeScript Data Models & Contracts
 ├── supabase/
-│   ├── migrations/               # Database SQL Migration Files
-│   └── schema.sql                # Master Database Schema Reference
-├── package.json                  # Dependencies & Script Definitions
-└── README.md                     # Official Project Homepage Documentation
+│   ├── migrations/                 # Non-Destructive Database Migrations
+│   └── schema.sql                  # Consolidated Master Production SQL Schema
+├── package.json                    # Application Manifest & Dependencies
+├── tailwind.config.ts              # Design System Tokens & HSL Palette
+└── tsconfig.json                   # Strict TypeScript Configuration
 ```
 
 ---
 
-## 12. Request Lifecycle
+## ⚙️ Environment Variables
 
-```
-User Action (Click / Form Submit)
-       │
-       ▼
-Client State Handler / Custom Hook
-       │
-       ▼
-HTTP Fetch Request with Session Cookie
-       │
-       ▼
-Next.js Edge Middleware Guard (middleware.ts)
-       │
-       ▼
-Next.js Route Handler (/api/*)
-       │
-       ▼
-Web Crypto Encryption / Business Logic Layer
-       │
-       ▼
-Supabase PostgreSQL Query (with RLS Enforcement)
-       │
-       ▼
-JSON Response Payload / SSE Stream Chunks
-       │
-       ▼
-Client DOM State Update & Framer Motion Animation
-```
+| Variable | Required | Purpose |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | Yes | Supabase Project API URL endpoint |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Yes | Supabase Anonymous Client Public Key |
+| `SUPABASE_SERVICE_ROLE_KEY` | Yes | Supabase Admin Service Role Secret Key |
+| `NEXT_PUBLIC_APP_URL` | Yes | Base Application Host URL (`http://localhost:3000`) |
 
 ---
 
-## 13. Performance Architecture
+## ⚡ Performance Optimization Strategy
 
-- **Route Component Splitting**: Shared framework JS size maintained at **103 kB**.
-- **Asynchronous Web Streams**: SSE token decoding executed off the main thread via `ReadableStream` reader.
-- **Hardware-Accelerated UI**: Framer Motion uses CSS transform and opacity properties for 60 FPS rendering.
-
----
-
-## 14. Scalability
-
-- **Frontend**: Serverless Next.js App Router deployable across Vercel Edge Networks.
-- **Backend APIs**: Serverless route handlers scale horizontally without state retention.
-- **Database**: PostgreSQL 15 with composite B-Tree indexes and Supabase PgBouncer pooler connection management.
+1. **Server Components First**: Non-interactive page layouts are rendered on the server, eliminating client JS overhead.
+2. **Optimized Shared Bundle**: Shared JavaScript framework bundle overhead is maintained at **103 kB**.
+3. **Non-Blocking SSE Streaming**: Real-time token streaming uses native `ReadableStream` reader off the main thread.
+4. **GPU-Accelerated Animations**: Framer Motion transitions operate on CSS `opacity` and `transform` properties for 60 FPS performance.
 
 ---
 
-## 15. Engineering Decisions
+## 🚀 Scalability Strategy
 
-- **Why Next.js 15 App Router?** Unified full-stack framework with React 19 Server Component streaming capabilities.
-- **Why Supabase & PostgreSQL?** Native Row Level Security (RLS) and built-in `pgvector` extension for high-performance vector search.
-- **Why Server-Sent Events (SSE)?** Lower infrastructure complexity than WebSockets while providing HTTP/2 multiplexed real-time streaming.
-- **Why TypeScript Strict Mode?** Complete type safety across client state and API payloads.
-
----
-
-## 16. Known Limitations
-
-1. **Streaming Proxy Interception**: Certain strict enterprise corporate proxies may buffer HTTP responses, causing SSE chunks to arrive in batches rather than individual tokens.
-2. **In-Memory SSE Buffer Bounds**: Extremely large token stream logs (> 50,000 words in a single response) accumulate client-side memory if left open indefinitely.
+- **Stateless Serverless Execution**: Next.js API routes execute independently, allowing horizontal scaling across edge locations.
+- **PgBouncer Connection Pooling**: Prevents PostgreSQL connection starvation during high concurrency bursts.
+- **Multi-Provider LLM Fallbacks**: Circuit breaker pattern automatically switches providers when an upstream API experiences rate limits or latency spikes.
 
 ---
 
-## 17. Future Architecture
+## 📋 Architectural Design Decisions & Trade-Offs
 
-### Version 1.1 (Short-Term Roadmap)
-- **WebSocket Fallback Transport**: Dynamic transport switching when SSE buffering is detected.
-- **Zustand Global State Store**: Centralized global UI tab state management.
-
-### Version 2.0 (Long-Term Roadmap)
-- **Enterprise SAML / Single Sign-On**: Integration with Okta, Azure AD, and Ping Identity.
-- **Edge Subagent Execution**: Running lightweight subagent swarms directly on Vercel Edge Runtime.
+| Decision | Alternative Considered | Trade-Off Rationale |
+|---|---|---|
+| **Server-Sent Events (SSE)** | WebSockets | SSE simplifies HTTP infrastructure, avoids gateway state management, and works natively with Next.js edge stream handlers. |
+| **AES-256-GCM Web Crypto** | Plaintext Key Storage | Increases CPU encryption overhead slightly in exchange for bank-grade secret isolation. |
+| **Non-Recursive RLS Subqueries** | Self-Referencing RLS | Slightly larger SQL subquery plans in exchange for 100% elimination of `ERROR 42P17` recursive policy crashes. |
 
 ---
 
-## 18. Architecture Summary
+## 🛣️ Future Architecture Evolution
 
-Antigravity AI OS v1.0.0 is an enterprise-certified software platform combining full-stack Next.js 15 App Router capabilities, Bank-Grade AES-256-GCM secret encryption, non-recursive PostgreSQL RLS multi-tenancy, and real-time SSE token streaming. It is certified, production-ready, and optimized for enterprise scalability.
+- **Version 1.1**: Native WebSocket fallback channel for proxies blocking HTTP streaming, interactive subagent thought timeline scrubber.
+- **Version 2.0**: Enterprise SAML/SSO integration, distributed multi-region worker deployment, community agent marketplace.
+
+---
+
+## 📜 Architecture Summary
+
+Antigravity AI OS v1.0.0 represents a modern, resilient, enterprise-certified AI platform architecture. Combining Next.js 15, React 19, Supabase PostgreSQL, non-recursive RLS policies, AES-256-GCM encryption, and low-latency SSE streaming, the system is fully certified and ready for production scaling.
