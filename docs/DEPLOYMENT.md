@@ -162,6 +162,18 @@ NEXT_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
 
 ---
 
+## 💸 Infrastructure Cost Optimization
+
+Antigravity AI OS is architected for maximum cost efficiency across cloud providers:
+
+1. **Serverless On-Demand Scaling**: Next.js API routes run on serverless functions that scale to zero when idle, eliminating fixed compute instance costs.
+2. **Edge Asset Caching**: Static assets, Google Fonts, and pre-rendered page shells are cached globally on Vercel's Edge CDN, minimizing origin server fetches.
+3. **Optimized JS Overhead**: Framework JavaScript bundle overhead is maintained at **103 kB shared JS**, reducing client bandwidth consumption.
+4. **PgBouncer Connection Pooling**: Reuses PostgreSQL connections on port 6543, avoiding connection overhead on Supabase compute resources.
+5. **Vector Query Optimization**: Cosine similarity searches over `pgvector(1536)` run with composite B-Tree filtering to reduce database CPU cycles.
+
+---
+
 ## 🛠 Database Migration Strategy
 
 Database migrations follow a non-destructive version-controlled pipeline (`supabase/migrations/`).
@@ -196,7 +208,7 @@ npm run build
 
 ---
 
-## 🔄 Rollback & Recovery Strategy
+## 🔄 Rollback Strategy
 
 In the event of a critical production anomaly, Antigravity AI OS supports instant zero-downtime rollbacks.
 
@@ -217,6 +229,24 @@ vercel rollback <deployment-id-or-url>
 
 ---
 
+## 🏥 Disaster Recovery Strategy
+
+Antigravity AI OS enforces strict disaster recovery protocols to ensure high availability and business continuity.
+
+### Service Recovery Objectives
+- **Recovery Time Objective (RTO)**: < 15 minutes for complete application service restoration.
+- **Recovery Point Objective (RPO)**: < 1 hour for database state recovery.
+
+### Disaster Recovery Capabilities
+1. **Automated Database Backups**: Supabase manages daily automated physical backups with Point-in-Time Recovery (PITR) enabled on production projects.
+2. **Secret Master Key Rotation**: If `ENCRYPTION_SECRET_KEY` is compromised, an administrative script re-encrypts `workspace_secrets` records using a new 32-byte master key.
+3. **Service Restoration Workflow**:
+   - Re-deploy healthy Next.js build commit via Vercel CLI.
+   - Restore database state via Supabase PITR console to specified timestamp.
+   - Run health checks on `/api/observability/metrics` to verify operational status.
+
+---
+
 ## 📈 Monitoring, Observability & Health Endpoints
 
 ### Certified Health Check Endpoints
@@ -227,9 +257,11 @@ vercel rollback <deployment-id-or-url>
 | `/api/observability/metrics` | `HTTP 200 OK` | System Latency, Circuit Breakers & Token Metrics |
 | `/api/profile` | `HTTP 200 OK` | Database Connectivity & Auth Session Check |
 
-### Logging Infrastructure
-- **Structured Serverless Logging**: Errors and system operations are captured via `src/lib/logger.ts` emitting structured JSON.
-- **Audit Logging**: AI interactions and user actions are persisted in `ai_audit_logs` and `activity_logs`.
+### Observability Architecture
+- **Runtime Monitoring**: Vercel Web Analytics and Speed Insights track Real User Monitoring (RUM) metrics and Core Web Vitals.
+- **Application Logging**: Structured JSON logger (`src/lib/logger.ts`) logs error tracebacks and serverless route executions.
+- **Database Telemetry**: Supabase Dashboard monitors PostgreSQL CPU load, memory usage, and PgBouncer pooler stats.
+- **Provider Circuit Breaker**: The `provider_health` table tracks real-time LLM API latencies and error rates, triggering automated model fallbacks when degradation is detected.
 
 ---
 
@@ -254,18 +286,24 @@ vercel rollback <deployment-id-or-url>
 
 ## ⚖️ Deployment Design Decisions & Trade-Offs
 
-| Decision | Alternative Considered | Benefits | Trade-Offs & Rationale |
+| Deployment Decision | Alternative Considered | Benefits Achieved | Trade-Offs & Rationale |
 |---|---|---|---|
 | **Vercel Serverless Deployment** | Self-Hosted Docker Container on AWS EC2 | Automatic global CDN, zero server management, sub-second deployment rollbacks. | Vendor dependency on Vercel platform runtime. |
-| **Supabase Managed DB + PgBouncer** | Self-Hosted PostgreSQL Container | Built-in authentication, vector extension, automated backups, PgBouncer pooler. | Managed service costs at high scale. |
+| **Supabase Managed DB + PgBouncer** | Self-Hosted PostgreSQL Container | Built-in authentication, vector extension, automated backups, PgBouncer pooler. | Managed service subscription fees at scale. |
 | **Server-Sent Events (SSE)** | Custom WebSockets Gateway Server | Standard HTTP streaming natively compatible with serverless Edge routes. | One-way server-to-client streaming output. |
+| **Edge Anycast CDN** | Dedicated CloudFront Distro | Automatic asset routing, global SSL termination, zero config CDN setup. | Managed through Vercel platform domain settings. |
 
 ---
 
 ## 🛣️ Future Deployment Roadmap
 
-- **Version 1.1**: Automated preview branch database branching via Supabase CLI integration.
-- **Version 2.0**: Multi-region edge worker deployment (Vercel Edge Runtime / Cloudflare Workers), enterprise SAML/SSO authentication.
+The following deployment enhancements are planned for future major releases:
+
+- **Canary & Blue-Green Deployments**: Gradual traffic shifting (10% -> 50% -> 100%) during production release rollouts.
+- **Automated Database Branching**: Ephemeral database branch creation per GitHub Pull Request using Supabase CLI.
+- **Multi-Region Edge Workers**: Deploying API route handlers across Vercel Edge Runtime and Cloudflare Workers for global sub-50ms latencies.
+- **Kubernetes (K8s) & Hybrid Enterprise Support**: Helm chart packaging for single-tenant enterprise customers requiring private cloud deployments (AWS EKS, Azure AKS, GCP GKE).
+- **Automated Failover Routing**: Automatic multi-region DNS failover during cloud provider outages.
 
 ---
 
