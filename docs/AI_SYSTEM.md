@@ -73,15 +73,17 @@ Antigravity AI OS features a decoupled multi-provider AI model router supporting
 
 ### Supported Model Registry
 
-| Model ID | Provider Name | Context Window | Max Completion | Prompt Cost / 1k | Completion Cost / 1k | Vision Support |
+| Provider | Integration Layer | Routing Supported | Streaming | Fallback | Vision | Notes |
 |---|---|---|---|---|---|---|
-| `gemini-3.6-pro` | Google Gemini | 1,000,000 | 8,192 | $0.00125 | $0.00500 | Yes |
-| `gemini-3.5-flash` | Google Gemini | 1,000,000 | 8,192 | $0.00015 | $0.00060 | Yes |
-| `gpt-4o` | OpenAI | 128,000 | 4,096 | $0.00250 | $0.01000 | Yes |
-| `claude-3.5-sonnet` | Anthropic | 200,000 | 8,192 | $0.00300 | $0.01500 | Yes |
-| `llama-3.3-70b` | Groq | 128,000 | 4,096 | $0.00059 | $0.00079 | No |
-| `deepseek-r1` | OpenRouter | 64,000 | 8,192 | $0.00050 | $0.00219 | No |
-| `ollama-local-llama3`| Ollama (Local) | 32,000 | 4,096 | $0.00000 | $0.00000 | No |
+| **Google Gemini** | `@google/generative-ai` SDK | Yes (`gemini-3.6-pro`, `gemini-3.5-flash`) | Yes (SSE) | Automatic (`gemini-3.5-flash`) | Yes | High-concurrency primary default gateway |
+| **OpenAI** | Official OpenAI REST Client | Yes (`gpt-4o`, `gpt-4o-mini`) | Yes (SSE) | Yes | Yes | High-reasoning foundation model provider |
+| **Anthropic** | `@anthropic-ai/sdk` Client | Yes (`claude-3.5-sonnet`) | Yes (SSE) | Yes | Yes | Advanced code generation & architecture analysis |
+| **Groq** | Low-Latency Groq Engine | Yes (`llama-3.3-70b`) | Yes (SSE) | Yes | No | Ultra-fast inference engine |
+| **OpenRouter** | OpenRouter REST Gateway | Yes (`deepseek-r1`) | Yes (SSE) | Yes | No | Extended open-weights reasoning router |
+| **Ollama** | Local Host HTTP Endpoint | Yes (`ollama-local-llama3`) | Yes (SSE) | Local Only | No | Offline privacy-isolated local inference |
+
+> **Note**: Provider specifications (pricing, token limits, and supported models) evolve over time and should always be referenced from the official provider documentation. Antigravity AI OS dynamically supports provider updates through its provider abstraction layer.
+
 
 ```mermaid
 graph LR
